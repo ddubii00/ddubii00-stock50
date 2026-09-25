@@ -128,6 +128,31 @@ class Repository:
                 )
             ]
 
+    def article_count(self):
+        with self.connect() as con:
+            return int(con.execute("SELECT COUNT(*) FROM articles").fetchone()[0])
+
+    def article_refs(self):
+        """Lightweight article list for /api/state backward compatibility."""
+        with self.connect() as con:
+            return [
+                {"id": row["id"]}
+                for row in con.execute("SELECT id FROM articles ORDER BY id DESC")
+            ]
+
+    def candidate_summaries(self):
+        """Only fields needed by the browser candidate table; excludes large content_excerpt."""
+        with self.connect() as con:
+            return [
+                dict(row)
+                for row in con.execute(
+                    "SELECT id,source,title,url,published_at,section,snippet,"
+                    "importance_score,duplicate_group,is_candidate "
+                    "FROM articles WHERE is_candidate=1 "
+                    "ORDER BY importance_score DESC,published_at DESC,id DESC LIMIT 50"
+                )
+            ]
+
     def candidates(self):
         return [x for x in self.articles() if x["is_candidate"]]
 

@@ -9,3 +9,8 @@
 - 잘못 삽입된 `source_citation`/ChatGPT UI citation 흔적을 JSON 파싱 전에 제거합니다.
 - 한국경제 로그인 쿠키를 이용한 기사 본문 수집 구조를 포함합니다.
 - 비밀정보/쿠키/DB는 GitHub에 포함하지 않습니다.
+
+## 2026-09-25 performance hotfix
+- `/api/state` no longer sends every article body on initial page load.
+- Candidate table uses a lightweight 50-row query.
+- Frontend now shows a visible loading error instead of staying on `기사 데이터를 불러오는 중…`.

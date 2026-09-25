@@ -146,12 +146,16 @@ def index():
 
 @app.get("/api/state")
 def state():
-    articles = repo.articles()
+    # Initial page load must stay lightweight.  The browser only needs the
+    # article count plus the 50 candidate rows; full article bodies remain in
+    # SQLite and are read server-side when the AI prompt is generated.
     snapshots = repo.snapshots()
     latest = get_snapshot_payload(snapshots[0]["id"]) if snapshots else None
+    article_count = repo.article_count()
     return {
-        "articles": articles,
-        "candidates": [a for a in articles if a["is_candidate"]],
+        "article_count": article_count,
+        "articles": repo.article_refs(),
+        "candidates": repo.candidate_summaries(),
         "snapshots": snapshots,
         "latest": latest,
     }

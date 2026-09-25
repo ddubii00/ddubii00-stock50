@@ -124,7 +124,10 @@ function renderAnalysis(data) {
 
 function render() {
   const candidates = state.candidates || [];
-  $("#status").textContent = `수집 ${(state.articles || []).length}개 · AI 후보 ${candidates.length}개 · 분석기사 ${state.latest?.articles?.length || 0}개`;
+  const articleCount = Number.isFinite(Number(state.article_count))
+    ? Number(state.article_count)
+    : (state.articles || []).length;
+  $("#status").textContent = `수집 ${articleCount}개 · AI 후보 ${candidates.length}개 · 분석기사 ${state.latest?.articles?.length || 0}개`;
 
   $("#candidates").innerHTML = candidates.map((article) => `
     <tr>
@@ -148,8 +151,20 @@ function render() {
 }
 
 async function load() {
-  state = await api("api/state");
-  render();
+  const status = $("#status");
+  try {
+    const started = performance.now();
+    state = await api("api/state");
+    render();
+    const elapsed = (performance.now() - started) / 1000;
+    if (elapsed > 2.0) {
+      console.info(`api/state loaded in ${elapsed.toFixed(2)}s`);
+    }
+  } catch (error) {
+    status.textContent = `기사 데이터 로딩 실패: ${error.message}`;
+    toast(`기사 데이터 로딩 실패: ${error.message}`);
+    console.error(error);
+  }
 }
 
 load();
