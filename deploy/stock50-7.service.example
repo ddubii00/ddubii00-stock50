@@ -1,0 +1,15 @@
+[Unit]
+Description=stock50-7 Hankyung News Analysis
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/var/www/stock50-7
+Environment=DATABASE_PATH=/var/www/stock50-7/data/stock50.db
+ExecStart=/var/www/stock50-7/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8050 --proxy-headers
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
