@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>stock50 뉴스 분석</title>
-  <link rel="stylesheet" href="static/style.css">
+  <link rel="stylesheet" href="/stock50-7/static/style.css?v=20260925-3">
 </head>
 <body>
 <main>
@@ -71,6 +71,14 @@
 </dialog>
 
 <div id="toast"></div>
-<script src="static/app.js"></script>
+<script>
+window.setTimeout(() => {
+  const el = document.getElementById("status");
+  if (el && el.textContent.includes("불러오는 중")) {
+    el.textContent = "프론트엔드 또는 API 응답을 기다리는 중입니다…";
+  }
+}, 8000);
+</script>
+<script src="/stock50-7/static/app.js?v=20260925-3"></script>
 </body>
 </html>

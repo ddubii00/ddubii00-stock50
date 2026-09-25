@@ -15,15 +15,35 @@ const toast = (text) => {
   setTimeout(() => el.classList.remove("show"), 2300);
 };
 
-async function api(path, opt) {
-  const response = await fetch(path, opt);
-  let data = {};
-  try { data = await response.json(); } catch (_) {}
-  if (!response.ok) {
-    const detail = typeof data.detail === "string" ? data.detail : "요청 오류";
-    throw Error(detail);
+const APP_BASE = "/stock50-7/";
+const FRONTEND_VERSION = "20260925-3";
+
+async function api(path, opt = {}) {
+  const cleanPath = String(path || "").replace(/^\/+/, "");
+  const url = APP_BASE + cleanPath;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  try {
+    const response = await fetch(url, {
+      cache: "no-store",
+      ...opt,
+      signal: controller.signal,
+    });
+    let data = {};
+    try { data = await response.json(); } catch (_) {}
+    if (!response.ok) {
+      const detail = typeof data.detail === "string" ? data.detail : `요청 오류 (HTTP ${response.status})`;
+      throw Error(detail);
+    }
+    return data;
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw Error("서버 응답시간 초과(12초) — /api/state 상태를 확인하세요.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
   }
-  return data;
 }
 
 function formatKoreanDate(value) {

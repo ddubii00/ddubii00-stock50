@@ -22,6 +22,7 @@
 ./app/services/__init__.py
 ./app/services/__pycache__/__init__.cpython-313.pyc
 ./app/services/__pycache__/top10.cpython-313.pyc
+./app/services/__pycache__/universe.cpython-313.pyc
 ./app/services/hankyung_auth.py
 ./app/services/top10.py
 ./app/services/universe.py

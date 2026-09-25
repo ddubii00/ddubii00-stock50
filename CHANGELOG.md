@@ -14,3 +14,9 @@
 - `/api/state` no longer sends every article body on initial page load.
 - Candidate table uses a lightweight 50-row query.
 - Frontend now shows a visible loading error instead of staying on `기사 데이터를 불러오는 중…`.
+
+## 2026-09-25 v3 initial-load reliability
+- Frontend API requests use absolute `/stock50-7/` paths, so trailing-slash URL differences cannot send requests to the wrong endpoint.
+- JS/CSS URLs are cache-busted.
+- API fetches use `cache: no-store` and a 12-second timeout with a visible error.
+- `/api/state` no longer returns article reference rows and limits snapshot metadata to 100 rows.

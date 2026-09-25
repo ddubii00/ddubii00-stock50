@@ -154,9 +154,9 @@ def state():
     article_count = repo.article_count()
     return {
         "article_count": article_count,
-        "articles": repo.article_refs(),
+        "articles": [],
         "candidates": repo.candidate_summaries(),
-        "snapshots": snapshots,
+        "snapshots": snapshots[:100],
         "latest": latest,
     }
 
