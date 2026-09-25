@@ -250,33 +250,181 @@ async def refresh_universe(repo):
 
 
 async def ensure_universe(repo):
+    """
+    기사 수집용 Universe 확인.
+
+    원칙:
+    1. 정상적인 한국 Universe가 DB에 있으면 절대 다시 다운로드하지 않는다.
+    2. 미국 Universe만 없으면 미국 종목만 별도로 추가한다.
+    3. 미국 Universe 다운로드 실패가 기사 수집 실패로 이어지지 않는다.
+    4. 기존 한국 Universe는 보존한다.
+    """
+
     with repo.connect() as con:
         rows = con.execute(
-            "SELECT market,count(*) AS n FROM stock_universe GROUP BY market"
+            "SELECT market,count(*) AS n "
+            "FROM stock_universe GROUP BY market"
         ).fetchall()
-    counts = {x["market"]: x["n"] for x in rows}
+
+    counts = {
+        x["market"]: x["n"]
+        for x in rows
+    }
 
     kospi = counts.get("KOSPI", 0)
     kosdaq = counts.get("KOSDAQ", 0)
+
     us = sum(
         counts.get(market, 0)
-        for market in ("NASDAQ", "NYSE", "NYSEAMERICAN")
+        for market in (
+            "NASDAQ",
+            "NYSE",
+            "NYSEAMERICAN",
+        )
     )
-    valid = (
-        KR_RANGES["KOSPI"][0] <= kospi <= KR_RANGES["KOSPI"][1]
-        and KR_RANGES["KOSDAQ"][0] <= kosdaq <= KR_RANGES["KOSDAQ"][1]
-        and us >= US_MIN_TOTAL
-    )
-    if valid:
-        return {
-            "total": sum(counts.values()),
-            "kospi": kospi,
-            "kosdaq": kosdaq,
-            "us": us,
-            "source": "LOCAL_DB",
-            "refreshed": False,
-        }
 
-    result = await refresh_universe(repo)
-    result["refreshed"] = True
-    return result
+    kr_valid = (
+        KR_RANGES["KOSPI"][0]
+        <= kospi
+        <= KR_RANGES["KOSPI"][1]
+        and
+        KR_RANGES["KOSDAQ"][0]
+        <= kosdaq
+        <= KR_RANGES["KOSDAQ"][1]
+    )
+
+    # -------------------------------------------------
+    # 한국 Universe가 이미 정상인 경우
+    # KIS를 다시 받지 않는다.
+    # -------------------------------------------------
+    if kr_valid:
+
+        # 미국 Universe도 이미 있으면 즉시 사용
+        if us >= US_MIN_TOTAL:
+            return {
+                "total": sum(counts.values()),
+                "kospi": kospi,
+                "kosdaq": kosdaq,
+                "us": us,
+                "source": "LOCAL_DB",
+                "refreshed": False,
+            }
+
+        # 미국 Universe만 별도로 추가 시도
+        try:
+            timeout = httpx.Timeout(
+                40,
+                connect=15,
+            )
+
+            headers = {
+                "User-Agent": "stock50-7/2.1"
+            }
+
+            async with httpx.AsyncClient(
+                timeout=timeout,
+                follow_redirects=True,
+                headers=headers,
+            ) as client:
+
+                us_rows = await download_us_universe(
+                    client
+                )
+
+            stamp = datetime.now(
+                timezone.utc
+            ).isoformat()
+
+            with repo.connect() as con:
+
+                # 미국시장 데이터만 제거
+                # 한국 KOSPI/KOSDAQ은 절대 건드리지 않는다.
+                con.execute(
+                    """
+                    DELETE FROM stock_universe
+                    WHERE market IN (
+                        'NASDAQ',
+                        'NYSE',
+                        'NYSEAMERICAN'
+                    )
+                    """
+                )
+
+                con.executemany(
+                    """
+                    INSERT OR REPLACE INTO stock_universe(
+                        code,
+                        name,
+                        market,
+                        updated_at
+                    )
+                    VALUES(?,?,?,?)
+                    """,
+                    [
+                        (
+                            x["code"],
+                            x["name"],
+                            x["market"],
+                            stamp,
+                        )
+                        for x in us_rows
+                    ],
+                )
+
+            return {
+                "total": kospi + kosdaq + len(us_rows),
+                "kospi": kospi,
+                "kosdaq": kosdaq,
+                "us": len(us_rows),
+                "source": "LOCAL_KR+NASDAQ_TRADER",
+                "refreshed": True,
+            }
+
+        except Exception as exc:
+
+            # 미국 Universe 실패 때문에
+            # 기사 수집 전체가 실패하면 안 된다.
+            return {
+                "total": kospi + kosdaq + us,
+                "kospi": kospi,
+                "kosdaq": kosdaq,
+                "us": us,
+                "source": "LOCAL_KR",
+                "refreshed": False,
+                "warning": (
+                    "미국 Universe 갱신 실패: "
+                    + str(exc)
+                ),
+            }
+
+    # -------------------------------------------------
+    # 한국 Universe 자체가 비정상일 때만
+    # 전체 갱신을 시도한다.
+    # -------------------------------------------------
+    try:
+        result = await refresh_universe(repo)
+        result["refreshed"] = True
+        return result
+
+    except Exception as exc:
+
+        # 완전히 빈 DB가 아니라면 기존 Universe로
+        # 기사 수집을 계속한다.
+        total = sum(counts.values())
+
+        if total > 0:
+            return {
+                "total": total,
+                "kospi": kospi,
+                "kosdaq": kosdaq,
+                "us": us,
+                "source": "LOCAL_DB_FALLBACK",
+                "refreshed": False,
+                "warning": (
+                    "Universe 전체 갱신 실패: "
+                    + str(exc)
+                ),
+            }
+
+        raise
+

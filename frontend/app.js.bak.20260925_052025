@@ -1,0 +1,36 @@
+const $=s=>document.querySelector(s); let state={};
+const toast=t=>{let x=$('#toast');x.textContent=t;x.classList.add('show');setTimeout(()=>x.classList.remove('show'),2300)};
+const BASE='/stock50-7/';
+async function api(path,opt){
+  const url=BASE+String(path).replace(/^\\/+/, '');
+  const r=await fetch(url,opt);
+  let d;
+  try{
+    d=await r.json();
+  }catch(e){
+    throw Error(`서버 응답 오류 (${r.status})`);
+  }
+  if(!r.ok) throw Error(d.detail||`요청 오류 (${r.status})`);
+  return d;
+}
+function top(title,items,cls){return `<article class="top-card ${cls}"><h2>${title}</h2>${items.length?items.map((x,i)=>`<div class="rank"><b>${i+1}</b><div><b>${x.name}</b> <small>${x.code}</small><br><small>기사 ${x.articles}건 · HIGH ${x.high} · ${x.reason}</small></div><span class="score">${x.score>0?'+':''}${x.score}</span></div>`).join(''):'<p class="muted">저장된 분석 결과가 없습니다.</p>'}</article>`}
+function renderAnalysis(data){let rows=data?.articles||[];$('#analysisCount').textContent=rows.length;$('#top').innerHTML=top('오늘의 종합 수혜주 TOP 10',data?.top10?.beneficiaries||[],'benefit')+top('오늘의 종합 피해주 TOP 10',data?.top10?.losers||[],'loss');$('#analyses').innerHTML=rows.length?rows.map((a,i)=>`<article class="article"><span class="badge">${i+1}. 분석완료 · ${a.confidence}</span><h3>${a.title}</h3><ul>${a.summary.map(x=>`<li>${x}</li>`).join('')}</ul>${a.impacts.map(s=>`<div class="impact"><b>${s.side==='beneficiaries'?'수혜':'피해'}</b> ${s.name} ${s.side==='beneficiaries'?'+':'-'}${s.impact} — ${s.reason}</div>`).join('')}<a target="_blank" href="${a.url}">한국경제 원문 ↗</a></article>`).join(''):'<p class="muted">AI 분석 전에는 요약을 만들지 않습니다.</p>'}
+function render(){let c=state.candidates||[]; $('#status').textContent=`수집 ${state.articles.length}개 · AI 후보 ${c.length}개 · 분석기사 ${state.latest?.articles?.length||0}개`;$('#candidates').innerHTML=c.map((a,i)=>`<tr><td><input class="pick" type="checkbox" value="${a.id}" checked></td><td>${a.importance_score}</td><td>${a.published_at||'-'}</td><td>${a.section||'-'}</td><td>${a.title}</td><td>${a.snippet||''}</td><td><a target="_blank" href="${a.url}">원문</a></td></tr>`).join('');let s=$('#snapshots');s.innerHTML='<option value="">현재 분석</option>'+state.snapshots.map(x=>`<option value="${x.id}">${x.analysis_time}</option>`).join('');renderAnalysis(state.latest)}
+async function load(){
+  try{
+    state=await api('api/state');
+    render();
+  }catch(e){
+    console.error(e);
+    const status=document.querySelector('#status');
+    if(status){
+      status.textContent='기사 데이터 로딩 오류: '+e.message;
+    }
+    toast('기사 데이터 로딩 오류: '+e.message);
+  }
+}
+load();
+$('#collect').onclick=async()=>{try{let d=await api('api/collect',{method:'POST'});toast(`${d.fetched}개 기사를 수집했습니다`);load()}catch(e){toast(e.message)}};
+function choose(n){document.querySelectorAll('.pick').forEach((x,i)=>x.checked=i<n)}document.querySelectorAll('[data-count]').forEach(x=>x.onclick=()=>choose(+x.dataset.count));$('#all').onclick=()=>choose(999);$('#none').onclick=()=>choose(0);
+$('#copy').onclick=async()=>{let ids=[...document.querySelectorAll('.pick:checked')].map(x=>x.value).join(',');try{let d=await api('api/prompt?ids='+ids);await navigator.clipboard.writeText(d.text);toast('AI 분석용 자료를 복사했습니다')}catch(e){toast(e.message)}};
+$('#openModal').onclick=()=>$('#modal').showModal();async function submit(save){let el=$('#validation');try{let d=await api('api/analysis/'+(save?'save':'validate'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({raw:$('#raw').value})});el.textContent=save?'저장되었습니다.':`검증 완료: ${d.data.articles.length}개 기사`;if(save){$('#modal').close();toast('분석 snapshot을 저장했습니다');load()}}catch(e){el.textContent=e.message;el.style.color='#c33'}}$('#validate').onclick=()=>submit(false);$('#save').onclick=()=>submit(true);$('#snapshots').onchange=async e=>{if(e.target.value)renderAnalysis(await api('api/snapshot/'+e.target.value));else renderAnalysis(state.latest)};

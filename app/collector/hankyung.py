@@ -149,8 +149,37 @@ async def fetch_article(client, sem, item):
         return item
 
 
-async def collect(repo):
+async def collect(repo, progress=None):
+    # STOCK50_REAL_PROGRESS_COLLECTOR
+    def report(stage, current=0, total=0, message=""):
+        if progress is None:
+            return
+        try:
+            progress(
+                stage,
+                int(current or 0),
+                int(total or 0),
+                str(message or ""),
+            )
+        except Exception:
+            # 진행률 표시 오류가 실제 기사 수집을 방해하면 안 된다.
+            pass
+
+    report(
+        "login",
+        0,
+        0,
+        "한국경제 로그인 상태를 확인하고 있습니다.",
+    )
+
     auth = await ensure_login(force=False)
+
+    report(
+        "feeds",
+        0,
+        0,
+        "한국경제 뉴스 피드를 불러오고 있습니다.",
+    )
     cookies, cookie_count = load_cookies()
     existing = repo.articles()
     existing_urls = {x["url"] for x in existing}
@@ -187,10 +216,51 @@ async def collect(repo):
 
         raw.sort(key=lambda x: (x["_pre_score"], -x["_order"]), reverse=True)
         targets = raw[:MAX_PROCESS]
-        sem = asyncio.Semaphore(MAX_CONCURRENT)
-        targets = await asyncio.gather(
-            *[fetch_article(client, sem, item) for item in targets]
+        total_targets = len(targets)
+
+        report(
+            "articles",
+            0,
+            total_targets,
+            f"0/{total_targets} 기사 처리 중",
         )
+
+        sem = asyncio.Semaphore(MAX_CONCURRENT)
+        completed = 0
+
+        async def fetch_with_progress(item):
+            nonlocal completed
+
+            result = await fetch_article(
+                client,
+                sem,
+                item,
+            )
+
+            completed += 1
+
+            report(
+                "articles",
+                completed,
+                total_targets,
+                f"{completed}/{total_targets} 기사 처리 중",
+            )
+
+            return result
+
+        targets = await asyncio.gather(
+            *[
+                fetch_with_progress(item)
+                for item in targets
+            ]
+        )
+
+    report(
+        "saving",
+        len(targets),
+        len(targets),
+        "수집한 기사 데이터를 저장하고 있습니다.",
+    )
 
     new_count = 0
     for item in targets:
@@ -224,6 +294,13 @@ async def collect(repo):
         prior_titles.append(title)
 
     repo.refresh_candidates(50)
+
+    report(
+        "done",
+        len(targets),
+        len(targets),
+        "기사 수집이 완료되었습니다.",
+    )
     return {
         "new": new_count,
         "processed": len(targets),

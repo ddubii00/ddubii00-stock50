@@ -1,5 +1,6 @@
 import os
 import secrets
+import threading
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -20,6 +21,50 @@ repo.init()
 
 app = FastAPI(title="stock50-7")
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
+
+
+# STOCK50_REAL_PROGRESS_API
+_collect_progress_lock = threading.RLock()
+
+_collect_progress = {
+    "running": False,
+    "stage": "idle",
+    "current": 0,
+    "total": 0,
+    "percent": None,
+    "message": "대기 중",
+    "error": None,
+    "started_at": None,
+    "finished_at": None,
+}
+
+
+def _update_collect_progress(**values):
+    with _collect_progress_lock:
+        _collect_progress.update(values)
+
+
+def _read_collect_progress():
+    with _collect_progress_lock:
+        return dict(_collect_progress)
+
+
+def _collector_progress(stage, current, total, message):
+    percent = None
+
+    if total:
+        percent = round(
+            current * 100 / total
+        )
+
+    _update_collect_progress(
+        stage=stage,
+        current=current,
+        total=total,
+        percent=percent,
+        message=message,
+    )
+
 
 
 class RawAnalysis(BaseModel):
@@ -161,20 +206,109 @@ def state():
     }
 
 
+@app.get("/api/collect/status")
+def collect_status():
+    return _read_collect_progress()
+
+
 @app.post("/api/collect")
 async def run_collect():
-    universe = await ensure_universe(repo)
-    result = await collect(repo)
-    return {
-        "fetched": result["new"],
-        "processed": result["processed"],
-        "articles": result["total"],
-        "candidates": result["candidates"],
-        "auth_ok": result.get("auth_ok", False),
-        "auth_refreshed": result.get("auth_refreshed", False),
-        "cookie_count": result.get("cookie_count", 0),
-        "universe": universe,
-    }
+
+    with _collect_progress_lock:
+
+        if _collect_progress["running"]:
+            raise HTTPException(
+                409,
+                "이미 기사 수집이 진행 중입니다.",
+            )
+
+        _collect_progress.update(
+            {
+                "running": True,
+                "stage": "universe",
+                "current": 0,
+                "total": 0,
+                "percent": None,
+                "message": "종목 Universe를 확인하고 있습니다.",
+                "error": None,
+                "started_at": datetime.now(
+                    ZoneInfo("Asia/Seoul")
+                ).isoformat(),
+                "finished_at": None,
+            }
+        )
+
+    try:
+
+        universe = await ensure_universe(
+            repo
+        )
+
+        _update_collect_progress(
+            stage="login",
+            current=0,
+            total=0,
+            percent=None,
+            message="한국경제 로그인 상태를 확인하고 있습니다.",
+        )
+
+        result = await collect(
+            repo,
+            progress=_collector_progress,
+        )
+
+        response = {
+            "fetched": result["new"],
+            "processed": result["processed"],
+            "articles": result["total"],
+            "candidates": result["candidates"],
+            "auth_ok": result.get(
+                "auth_ok",
+                False,
+            ),
+            "auth_refreshed": result.get(
+                "auth_refreshed",
+                False,
+            ),
+            "cookie_count": result.get(
+                "cookie_count",
+                0,
+            ),
+            "universe": universe,
+        }
+
+        _update_collect_progress(
+            running=False,
+            stage="done",
+            current=result["processed"],
+            total=result["processed"],
+            percent=100,
+            message=(
+                f"기사 수집 완료 · "
+                f"신규 {result['new']}개 · "
+                f"처리 {result['processed']}개"
+            ),
+            error=None,
+            finished_at=datetime.now(
+                ZoneInfo("Asia/Seoul")
+            ).isoformat(),
+        )
+
+        return response
+
+    except Exception as exc:
+
+        _update_collect_progress(
+            running=False,
+            stage="error",
+            message="기사 수집 중 오류가 발생했습니다.",
+            error=f"{type(exc).__name__}: {exc}",
+            finished_at=datetime.now(
+                ZoneInfo("Asia/Seoul")
+            ).isoformat(),
+        )
+
+        raise
 
 
 @app.post("/api/prompt")

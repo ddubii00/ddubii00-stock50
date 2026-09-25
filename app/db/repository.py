@@ -218,15 +218,198 @@ class Repository:
             ]
 
     def create_ai_request(self, request_id, article_ids, prompt_text):
+        """
+        AI 분석 요청 생성 시 선택된 기사 내용을 그대로 snapshot 한다.
+
+        ai_request_articles에는 article_id뿐 아니라
+        title/url/published_at/section/content_text까지 저장하여
+        이후 원본 articles가 변경되어도 당시 AI 요청 내용을 보존한다.
+        """
+
+        ids = [
+            int(x)
+            for x in article_ids
+        ]
+
+        if not ids:
+            raise ValueError(
+                "AI 분석 요청에 포함할 기사가 없습니다."
+            )
+
         with self.connect() as con:
-            con.execute(
-                "INSERT INTO ai_requests(request_id,created_at,prompt_text) VALUES(?,?,?)",
-                (request_id, now(), prompt_text),
+
+            placeholders = ",".join(
+                "?"
+                for _ in ids
             )
-            con.executemany(
-                "INSERT INTO ai_request_articles(request_id,article_id,position) VALUES(?,?,?)",
-                [(request_id, int(aid), i) for i, aid in enumerate(article_ids)],
+
+            rows = [
+                dict(row)
+                for row in con.execute(
+                    f"""
+                    SELECT
+                        id,
+                        title,
+                        url,
+                        published_at,
+                        section,
+                        COALESCE(
+                            content_excerpt,
+                            snippet,
+                            ''
+                        ) AS content_text
+                    FROM articles
+                    WHERE id IN ({placeholders})
+                    """,
+                    ids,
+                )
+            ]
+
+            by_id = {
+                int(row["id"]): row
+                for row in rows
+            }
+
+            missing = [
+                aid
+                for aid in ids
+                if aid not in by_id
+            ]
+
+            if missing:
+                raise ValueError(
+                    "존재하지 않는 기사 ID: "
+                    + ", ".join(
+                        str(x)
+                        for x in missing
+                    )
+                )
+
+            # 기존 production DB와 신규 DB 양쪽 모두 대응
+            request_cols = {
+                row["name"]
+                for row in con.execute(
+                    "PRAGMA table_info(ai_requests)"
+                )
+            }
+
+            if "article_count" in request_cols:
+
+                con.execute(
+                    """
+                    INSERT INTO ai_requests(
+                        request_id,
+                        created_at,
+                        article_count,
+                        prompt_text
+                    )
+                    VALUES(?,?,?,?)
+                    """,
+                    (
+                        request_id,
+                        now(),
+                        len(ids),
+                        prompt_text,
+                    ),
+                )
+
+            else:
+
+                con.execute(
+                    """
+                    INSERT INTO ai_requests(
+                        request_id,
+                        created_at,
+                        prompt_text
+                    )
+                    VALUES(?,?,?)
+                    """,
+                    (
+                        request_id,
+                        now(),
+                        prompt_text,
+                    ),
+                )
+
+            snapshot_cols = {
+                row["name"]
+                for row in con.execute(
+                    "PRAGMA table_info(ai_request_articles)"
+                )
+            }
+
+            rich_snapshot = (
+                "title" in snapshot_cols
+                and
+                "url" in snapshot_cols
             )
+
+            if rich_snapshot:
+
+                values = []
+
+                for position, aid in enumerate(ids):
+
+                    article = by_id[aid]
+
+                    values.append(
+                        (
+                            request_id,
+                            aid,
+                            position,
+                            article["title"] or "",
+                            article["url"] or "",
+                            article.get(
+                                "published_at"
+                            ),
+                            article.get(
+                                "section"
+                            ),
+                            article.get(
+                                "content_text"
+                            ) or "",
+                        )
+                    )
+
+                con.executemany(
+                    """
+                    INSERT INTO ai_request_articles(
+                        request_id,
+                        article_id,
+                        position,
+                        title,
+                        url,
+                        published_at,
+                        section,
+                        content_text
+                    )
+                    VALUES(?,?,?,?,?,?,?,?)
+                    """,
+                    values,
+                )
+
+            else:
+
+                con.executemany(
+                    """
+                    INSERT INTO ai_request_articles(
+                        request_id,
+                        article_id,
+                        position
+                    )
+                    VALUES(?,?,?)
+                    """,
+                    [
+                        (
+                            request_id,
+                            aid,
+                            position,
+                        )
+                        for position, aid
+                        in enumerate(ids)
+                    ],
+                )
+
 
     def request_article_ids(self, request_id):
         with self.connect() as con:
